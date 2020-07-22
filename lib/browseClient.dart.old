@@ -1,0 +1,283 @@
+import 'package:flutter/cupertino.dart';
+import 'package:http/http.dart' as http;
+import 'package:html/parser.dart' as parser;
+import 'sessionData.dart';
+import 'errors.dart';
+import 'dart:convert';
+
+class BrowseClient {
+  SessionData _data;
+
+  BrowseClient() {
+    _data = new SessionData();
+  }
+
+  _replaceCharAt(String oldString, int index, String newChar) {
+    return oldString.substring(0, index) +
+        newChar +
+        oldString.substring(index + 1);
+  }
+
+  _postHTTPObjects(var URL,
+      {var params = '', var referer = '', var encoding = 'utf-8'}) async {
+    try {
+      print("Post to: ${URL}");
+
+      http.Response obj = await http.post(URL,
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.106 Safari/537.36',
+            'Cookie': _getCookieString(),
+            'Referer': referer,
+            'Accept':
+                'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'fr-CH, fr;q=0.9, en;q=0.8, de;q=0.7, *;q=0.5',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Upgrade-Insecure-Requests': '1',
+          },
+          body: params,
+          encoding: Encoding.getByName(encoding));
+
+      _updateCookie(obj);
+      return obj;
+    } finally {
+      //print("Post End");
+    }
+  }
+
+  _getHTTPObjects(var URL, {var referer = ''}) async {
+    try {
+      print('Trying to get:${URL}');
+      http.Response obj = await http.get(URL, headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.106 Safari/537.36',
+        'Cookie': _getCookieString(),
+        'Referer': referer,
+        'Accept':
+            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'fr-CH, fr;q=0.9, en;q=0.8, de;q=0.7, *;q=0.5',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Upgrade-Insecure-Requests': '1',
+      });
+      _updateCookie(obj);
+      return obj;
+    } finally {
+      //print('End get.');
+    }
+  }
+
+  _updateCookie(http.Response header) {
+    String cookies = header.headers['set-cookie'];
+    //print("Raw Cookie:${cookies}");
+
+    var cookieList = cookies.replaceAll(' ', '').split('Secure;HttpOnly,');
+
+    for (var e in cookieList) {
+      var temp1 = e.split(';');
+      var singleCookie = temp1[0];
+      String K = singleCookie.substring(0, singleCookie.indexOf('='));
+      String V = singleCookie.substring(
+          singleCookie.indexOf('=') + 1, singleCookie.length);
+      _data.cookiesMap[K] = V;
+    }
+    //print('Finished Updating Cookie.');
+  }
+
+  _getCookieString() {
+    var str = '';
+    _data.cookiesMap.forEach((var K, var V) {
+      str += "${K}=${V}; ";
+    });
+    if (str.length > 0) {
+      str = _replaceCharAt(str, str.length - 1, ''); //Delete Space
+      str = _replaceCharAt(str, str.length - 1, ''); //Delete ";"
+    }
+
+    return str;
+  }
+
+  EIHWAM(List unitList) {
+    double upper = 0.0, lower = 0.0;
+
+    for (Unit e in unitList) {
+      double Wi, CPi, Mi;
+      if (e.level >= 4)
+        Wi = 4.0;
+      else if (e.level == 1)
+        Wi = 0;
+      else
+        Wi = e.level.toDouble();
+
+      CPi = e.credit.toDouble();
+      Mi = e.mark.toDouble();
+
+      upper += Wi * CPi * Mi;
+      lower += Wi * CPi;
+    }
+    return upper / lower;
+  }
+
+  WAM(List unitList) {
+    double upper = 0.0, lower = 0.0;
+
+    for (Unit e in unitList) {
+      double CPi, Mi;
+      CPi = e.credit.toDouble();
+      Mi = e.mark.toDouble();
+      upper += CPi * Mi;
+      lower += CPi;
+    }
+
+    return upper / lower;
+  }
+
+  getResult() async {
+    //print('Start to get Result|Login');
+    http.Response get = await _getHTTPObjects(
+        "https://sydneystudent.sydney.edu.au/sitsvision/wrd/" +
+            _data.others['LOGINURI'],
+        referer: "https://sydneystudent.sydney.edu.au/sitsvision/wrd/SIW_LGN");
+
+    var doc = parser.parse(get.body);
+    var as = doc.querySelectorAll('a');
+    for (var e in as) {
+      if (e.attributes['id'] == 'ASSTUPOR01') {
+        _data.others['ASSURI'] = e.attributes['href'];
+      }
+    }
+    //print("ASSURI:" + _data.others['ASSURI']);
+    //print('Start to get Result|ASS');
+    get = await _getHTTPObjects(
+        "https://sydneystudent.sydney.edu.au/sitsvision/wrd/" +
+            _data.others['ASSURI'],
+        referer: "https://sydneystudent.sydney.edu.au/sitsvision/wrd/" +
+            _data.others['LOGINURI']);
+
+    RegExp r = new RegExp('<a href=".*"> View your academic transcript for');
+    var matched = r.firstMatch(get.body).group(0);
+    r = new RegExp('".*"');
+    var uri = r
+        .firstMatch(matched)
+        .group(0)
+        .replaceAll('"', '')
+        .replaceAll('../wrd/', '');
+    //print("RESULT URI:" + uri);
+    _data.others['RESULTURI'] = uri;
+
+    get = await _getHTTPObjects(
+        "https://sydneystudent.sydney.edu.au/sitsvision/wrd/" +
+            _data.others['RESULTURI'],
+        referer: "https://sydneystudent.sydney.edu.au/sitsvision/wrd/" +
+            _data.others['ASSURI']);
+
+    return parseUnits(get.body);
+  }
+
+  parseUnits(String hTML) {
+    String htmlCode = hTML.replaceAll(' ', '');
+    //print(htmlCode);
+
+    String regexStr =
+        r'<tr>\n<td>.*</td>\n<td>.*</td>\n<td>.*</td>\n<td>.*</td>\n<td>.*</td>\n<td>.*</td>\n<td>.*</td>\n</tr>';
+    RegExp reg = new RegExp(regexStr, multiLine: true);
+    //print(reg.isUnicode);
+    var matches = reg.allMatches(htmlCode);
+    if (!reg.hasMatch(htmlCode)) {
+      print('no match');
+    }
+
+    List<Unit> unitList = new List<Unit>();
+
+    var l = matches.toList();
+    print(l.length);
+    for (var e in l) {
+      var tmp_str = e
+          .group(0)
+          .replaceAll('<tr>', '')
+          .replaceAll('</tr>', '')
+          .replaceAll('<td>', '')
+          .replaceAll('\n', '');
+      var tmp = tmp_str.split('</td>');
+
+      int year = int.parse(tmp[0]);
+      int semester = tmp[1] == 'S1C' ? 1 : 2;
+      String code = tmp[2];
+      String name = tmp[3];
+      double mark = tmp[4] == '&nbsp;' ? 0.0 : double.parse(tmp[4]);
+      String grade = tmp[5] == '&nbsp;' ? 'N/A' : tmp[5];
+      int credit = tmp[6] == '&nbsp;' ? 0 : int.parse(tmp[6]);
+      //print(code);
+      int level = int.parse(code[4]);
+      unitList.add(
+          new Unit(year, semester, code, name, mark, grade, credit, level));
+    }
+    double eihwam = EIHWAM(unitList);
+    double wam = WAM(unitList);
+    return [eihwam, wam];
+  }
+
+  getLoginPage(var uniKey, var password) async {
+    try {
+      //print('Start to get Login');
+
+      http.Response get = await _getHTTPObjects(
+          'https://sydneystudent.sydney.edu.au/sitsvision/wrd/siw_lgn');
+
+      var doc = parser.parse(get.body);
+      var inputs = doc.querySelectorAll('input');
+
+      var params = '';
+
+      for (var e in inputs) {
+        var name = e.attributes['name'];
+        var value = e.attributes['value'];
+        if (name == '%.WEB_HEAD.MENSYS.1') continue;
+
+        var enName = Uri.encodeComponent(name);
+        var enValue = Uri.encodeComponent(value);
+
+        if (enName == 'SCREEN_WIDTH.DUMMY.MENSYS.1')
+          params += "&${enName}=1920";
+        else if (enName == 'SCREEN_HEIGHT.DUMMY.MENSYS.1')
+          params += "&${enName}=1080";
+        else if (enName == 'MUA_CODE.DUMMY.MENSYS.1')
+          params += "&${enName}=${uniKey}";
+        else if (enName == 'PASSWORD.DUMMY.MENSYS.1')
+          params += "&${enName}=${password}";
+        else if (enName == 'BP101.DUMMY_B.MENSYS')
+          params += "&${enName}=Log+in";
+        else
+          params += "&${enName}=${enValue}";
+      }
+
+      params = params.replaceFirst('&', ''); //Replace the first "&"
+
+      //print("Get Cookie:${_getCookieString()}");
+      //print("Login Params:${params}");
+
+      http.Response post = await _postHTTPObjects(
+          'https://sydneystudent.sydney.edu.au/sitsvision/wrd/SIW_LGN',
+          params: params,
+          referer:
+              'https://sydneystudent.sydney.edu.au/sitsvision/wrd/siw_lgn');
+
+      //print("Post Cookie:${_getCookieString()}");
+
+      doc = parser.parse(post.body);
+      inputs = doc.querySelectorAll('input');
+
+      for (var e in inputs) {
+        if (e.attributes['name'] == 'HREF.DUMMY.MENSYS.1') {
+          _data.others['LOGINURI'] = e.attributes['value'];
+          //print("Login URI:" + _data.others['LOGINURI']);
+        }
+      }
+      if (!_data.others.containsKey('LOGINURI')) {
+        print(post.body);
+        throw new FormException();
+      }
+    } finally {
+      //print('End Get Login');
+    }
+  }
+}
